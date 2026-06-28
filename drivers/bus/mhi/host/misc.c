@@ -256,6 +256,12 @@ void mhi_reg_write_work(struct work_struct *w)
 		if (!mhi_is_active(mhi_cntrl))
 			break;
 
+		/*
+		 * Prevent reordering to ensure updated val and reg_addr values
+		 * are loaded after valid is loaded. This is to prevent stale
+		 * values from being loaded before valid is checked.
+		 */
+		smp_rmb();
 		writel_relaxed(info->val, info->reg_addr);
 		info->valid = false;
 		mhi_priv->read_idx =
@@ -1194,6 +1200,10 @@ static int mhi_init_timesync(struct mhi_controller *mhi_cntrl,
 
 	/* save time_offset for obtaining time via MMIO register reads */
 	mhi_tsync->time_reg = mhi_cntrl->regs + time_offset;
+	mhi_tsync->int_sequence = 0;
+	mhi_tsync->local_time = 0;
+	mhi_tsync->remote_time = 0;
+	mhi_tsync->db_pending = false;
 
 	mutex_init(&mhi_tsync->mutex);
 

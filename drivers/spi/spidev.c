@@ -701,6 +701,7 @@ MODULE_DEVICE_TABLE(spi, spidev_spi_ids);
  * spidev should never be referenced in DT without a specific compatible string,
  * it is a Linux implementation thing rather than a description of the hardware.
  */
+
 static int spidev_of_check(struct device *dev)
 {
 	if (device_property_match_string(dev, "compatible", "spidev") < 0)
@@ -718,12 +719,12 @@ static const struct of_device_id spidev_dt_ids[] = {
 	{ .compatible = "lwn,bk4", .data = &spidev_of_check },
 	{ .compatible = "menlo,m53cpld", .data = &spidev_of_check },
 	{ .compatible = "micron,spi-authenta", .data = &spidev_of_check },
+	{ .compatible = "qcom,si5518-clk", .data = &spidev_of_check },
+	{ .compatible = "qcom,spi-msm-codec-slave", .data = &spidev_of_check },
 	{ .compatible = "rohm,bh2228fv", .data = &spidev_of_check },
 	{ .compatible = "rohm,dh2228fv", .data = &spidev_of_check },
 	{ .compatible = "semtech,sx1301", .data = &spidev_of_check },
 	{ .compatible = "silabs,em3581", .data = &spidev_of_check },
-	{ .compatible = "qcom,spi-msm-codec-slave", .data = &spidev_of_check },
-	{ .compatible = "qcom,si5518-clk", .data = &spidev_of_check },
 	{},
 };
 MODULE_DEVICE_TABLE(of, spidev_dt_ids);

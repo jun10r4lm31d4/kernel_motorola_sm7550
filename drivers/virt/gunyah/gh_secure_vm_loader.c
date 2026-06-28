@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -57,6 +58,8 @@ const static struct {
 	{GH_TRUSTED_VM, "trustedvm"},
 	{GH_CPUSYS_VM, "cpusys_vm"},
 	{GH_OEM_VM, "oemvm"},
+	{GH_ROBOTICS_VM1, "roboticsvm1"},
+	{GH_ROBOTICS_VM2, "rdcapvm"},
 };
 
 static DEFINE_SPINLOCK(gh_sec_vm_lock);
@@ -307,6 +310,7 @@ long gh_vm_ioctl_set_fw_name(struct gh_vm *vm, unsigned long arg)
 	if (copy_from_user(&vm_fw_name, (void __user *)arg, sizeof(vm_fw_name)))
 		return -EFAULT;
 
+	vm_fw_name.name[GH_VM_FW_NAME_MAX - 1] = '\0';
 	mutex_lock(&vm->vm_lock);
 	if (strlen(vm->fw_name)) {
 		pr_err("Secure VM %s already loaded %ld\n",

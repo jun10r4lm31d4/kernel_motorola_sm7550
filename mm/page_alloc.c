@@ -4938,6 +4938,7 @@ __perform_reclaim(gfp_t gfp_mask, unsigned int order,
 {
 	unsigned int noreclaim_flag;
 	unsigned long progress;
+	bool skip = false;
 
 	cond_resched();
 
@@ -4946,9 +4947,14 @@ __perform_reclaim(gfp_t gfp_mask, unsigned int order,
 	fs_reclaim_acquire(gfp_mask);
 	noreclaim_flag = memalloc_noreclaim_save();
 
+	trace_android_rvh_perform_reclaim(order, gfp_mask, ac->nodemask,
+					  &progress, &skip);
+	if (skip)
+		goto out;
+
 	progress = try_to_free_pages(ac->zonelist, order, gfp_mask,
 								ac->nodemask);
-
+out:
 	memalloc_noreclaim_restore(noreclaim_flag);
 	fs_reclaim_release(gfp_mask);
 
@@ -5260,6 +5266,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 restart:
 	compaction_retries = 0;
 	no_progress_loops = 0;
+	compact_result = COMPACT_SKIPPED;
 	compact_priority = DEF_COMPACT_PRIORITY;
 	cpuset_mems_cookie = read_mems_allowed_begin();
 	zonelist_iter_cookie = zonelist_iter_begin();
@@ -5281,6 +5288,19 @@ restart:
 					ac->highest_zoneidx, ac->nodemask);
 	if (!ac->preferred_zoneref->zone)
 		goto nopage;
+
+	/*
+	 * Check for insane configurations where the cpuset doesn't contain
+	 * any suitable zone to satisfy the request - e.g. non-movable
+	 * GFP_HIGHUSER allocations from MOVABLE nodes only.
+	 */
+	if (cpusets_insane_config() && (gfp_mask & __GFP_HARDWALL)) {
+		struct zoneref *z = first_zones_zonelist(ac->zonelist,
+					ac->highest_zoneidx,
+					&cpuset_current_mems_allowed);
+		if (!z->zone)
+			goto nopage;
+	}
 
 	if (alloc_flags & ALLOC_KSWAPD)
 		wake_all_kswapds(order, gfp_mask, ac);
@@ -5340,6 +5360,20 @@ restart:
 				goto nopage;
 
 			/*
+			 * THP page faults may attempt local node only first,
+			 * but are then allowed to only compact, not reclaim,
+			 * see alloc_pages_mpol().
+			 *
+			 * Compaction can fail for other reasons than those
+			 * checked above and we don't want such THP allocations
+			 * to put reclaim pressure on a single node in a
+			 * situation where other nodes might have plenty of
+			 * available memory.
+			 */
+			if (gfp_mask & __GFP_THISNODE)
+				goto nopage;
+
+			/*
 			 * Looks like reclaim/compaction is worth trying, but
 			 * sync compaction could be very expensive, so keep
 			 * using async compaction.
@@ -5349,6 +5383,14 @@ restart:
 	}
 
 retry:
+	/*
+	 * Deal with possible cpuset update races or zonelist updates to avoid
+	 * infinite retries.
+	 */
+	if (check_retry_cpuset(cpuset_mems_cookie, ac) ||
+	    check_retry_zonelist(zonelist_iter_cookie))
+		goto restart;
+
 	/* Ensure kswapd doesn't accidentally go to sleep as long as we loop */
 	if (alloc_flags & ALLOC_KSWAPD)
 		wake_all_kswapds(order, gfp_mask, ac);
@@ -6177,6 +6219,7 @@ long si_mem_available(void)
 	reclaimable = global_node_page_state_pages(NR_SLAB_RECLAIMABLE_B) +
 		global_node_page_state(NR_KERNEL_MISC_RECLAIMABLE);
 	available += reclaimable - min(reclaimable / 2, wmark_low);
+	trace_android_vh_si_mem_available_adjust(&available);
 
 	if (available < 0)
 		available = 0;
@@ -6193,6 +6236,7 @@ void si_meminfo(struct sysinfo *val)
 	val->totalhigh = totalhigh_pages();
 	val->freehigh = nr_free_highpages();
 	val->mem_unit = PAGE_SIZE;
+	trace_android_vh_si_meminfo_adjust(&val->totalram, &val->freeram);
 }
 
 EXPORT_SYMBOL(si_meminfo);
@@ -8842,6 +8886,7 @@ static void __setup_per_zone_wmarks(void)
 		zone->watermark_boost = 0;
 		zone->_watermark[WMARK_LOW]  = min_wmark_pages(zone) + tmp;
 		zone->_watermark[WMARK_HIGH] = min_wmark_pages(zone) + tmp * 2;
+		trace_android_vh_init_adjust_zone_wmark(zone, tmp);
 
 		spin_unlock_irqrestore(&zone->lock, flags);
 	}
@@ -9066,11 +9111,19 @@ int percpu_pagelist_high_fraction_sysctl_handler(struct ctl_table *table,
 	int old_percpu_pagelist_high_fraction;
 	int ret;
 
+	/*
+	 * Avoid using pcp_batch_high_lock for reads as the value is read
+	 * atomically and a race with offlining is harmless.
+	 */
+
+	if (!write)
+		return proc_dointvec_minmax(table, write, buffer, length, ppos);
+
 	mutex_lock(&pcp_batch_high_lock);
 	old_percpu_pagelist_high_fraction = percpu_pagelist_high_fraction;
 
 	ret = proc_dointvec_minmax(table, write, buffer, length, ppos);
-	if (!write || ret < 0)
+	if (ret < 0)
 		goto out;
 
 	/* Sanity checking to avoid pcp imbalance */
@@ -9223,7 +9276,7 @@ void *__init alloc_large_system_hash(const char *tablename,
 		panic("Failed to allocate %s hash table\n", tablename);
 
 	pr_info("%s hash table entries: %ld (order: %d, %lu bytes, %s)\n",
-		tablename, 1UL << log2qty, ilog2(size) - PAGE_SHIFT, size,
+		tablename, 1UL << log2qty, get_order(size), size,
 		virt ? (huge ? "vmalloc hugepage" : "vmalloc") : "linear");
 
 	if (_hash_shift)

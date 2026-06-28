@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2018, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -281,7 +281,7 @@ static const struct parent_map gcc_parent_map_5[] = {
 
 static const struct clk_parent_data gcc_parent_data_5[] = {
 	{ .fw_name = "bi_tcxo" },
-	{ .fw_name = "dsi0pll_byteclk_src" },
+	{ .fw_name = "dsi0pll_byteclk_src", .name = "dsi0pll_byteclk_src" },
 	{ .hw = &gpll0_out_main.clkr.hw },
 };
 
@@ -293,7 +293,7 @@ static const struct parent_map gcc_parent_map_6[] = {
 
 static const struct clk_parent_data gcc_parent_data_6[] = {
 	{ .fw_name = "bi_tcxo" },
-	{ .fw_name = "dsi0_phy_pll_out_byteclk" },
+	{ .fw_name = "dsi0_phy_pll_out_byteclk", .name = "dsi0pll_byteclk_src" },
 	{ .hw = &gpll0_out_main.clkr.hw },
 };
 
@@ -320,7 +320,7 @@ static const struct parent_map gcc_parent_map_8[] = {
 
 static const struct clk_parent_data gcc_parent_data_8[] = {
 	{ .fw_name = "bi_tcxo" },
-	{ .fw_name = "hdmi_phy_pll_clk" },
+	{ .fw_name = "hdmi_phy_pll_clk", .name = "hdmi_phy_pll_clk" },
 };
 
 static const struct parent_map gcc_parent_map_9[] = {
@@ -333,7 +333,7 @@ static const struct parent_map gcc_parent_map_9[] = {
 static const struct clk_parent_data gcc_parent_data_9[] = {
 	{ .fw_name = "bi_tcxo" },
 	{ .hw = &gpll0_out_main.clkr.hw },
-	{ .fw_name = "dsi0_phy_pll_out_dsiclk" },
+	{ .fw_name = "dsi0_phy_pll_out_dsiclk", .name = "dsi0pll_pclk_src" },
 	{ .hw = &gpll6.clkr.hw },
 
 };
@@ -366,7 +366,7 @@ static const struct parent_map gcc_parent_map_12[] = {
 
 static const struct clk_parent_data gcc_parent_data_12[] = {
 	{ .fw_name = "bi_tcxo" },
-	{ .fw_name = "dsi0pll_pclk_src" },
+	{ .fw_name = "dsi0pll_pclk_src", .name = "dsi0pll_pclk_src" },
 	{ .hw = &gpll0_out_main.clkr.hw },
 };
 

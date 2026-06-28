@@ -2919,14 +2919,14 @@ static void stmmac_dma_interrupt(struct stmmac_priv *priv)
 	u32 rx_channel_count = priv->plat->rx_queues_to_use;
 	u32 channels_to_check = tx_channel_count > rx_channel_count ?
 				tx_channel_count : rx_channel_count;
-	u32 chan;
-	int status[max_t(u32, MTL_MAX_TX_QUEUES, MTL_MAX_RX_QUEUES)];
+	int chan;
+	int status[MAX_T(u32, MTL_MAX_TX_QUEUES, MTL_MAX_RX_QUEUES)];
 
 	/* Make sure we never check beyond our status buffer. */
 	if (WARN_ON_ONCE(channels_to_check > ARRAY_SIZE(status)))
 		channels_to_check = ARRAY_SIZE(status);
 
-	for (chan = 0; chan < channels_to_check; chan++)
+	for (chan = channels_to_check - 1; chan >= 0; chan--)
 		status[chan] = stmmac_napi_check(priv, chan,
 						 DMA_DIR_RXTX);
 
@@ -3456,17 +3456,17 @@ static int stmmac_hw_setup(struct net_device *dev, bool ptp_register)
 			netdev_warn(priv->dev,
 				    "failed to enable PTP reference clock: %pe\n",
 				    ERR_PTR(ret));
-	}
 
-	ret = stmmac_init_ptp(priv);
-	if (ret == -EOPNOTSUPP)
-		netdev_warn(priv->dev, "PTP not supported by HW\n");
-	else if (ret)
-		netdev_warn(priv->dev, "PTP init failed\n");
-	else if (ptp_register) {
-		stmmac_ptp_register(priv);
-		clk_set_rate(priv->plat->clk_ptp_ref,
-					 priv->plat->clk_ptp_rate);
+		ret = stmmac_init_ptp(priv);
+		if (ret == -EOPNOTSUPP) {
+			netdev_warn(priv->dev, "PTP not supported by HW\n");
+		} else if (ret) {
+			netdev_warn(priv->dev, "PTP init failed\n");
+		} else {
+			stmmac_ptp_register(priv);
+			clk_set_rate(priv->plat->clk_ptp_ref,
+				     priv->plat->clk_ptp_rate);
+		}
 		ret = priv->plat->init_pps(priv);
 	}
 
@@ -3488,8 +3488,12 @@ static int stmmac_hw_setup(struct net_device *dev, bool ptp_register)
 		}
 	}
 
-	if (priv->hw->pcs)
-		stmmac_pcs_ctrl_ane(priv, priv->ioaddr, 1, priv->hw->ps, 0);
+	if (priv->hw->pcs) {
+		if (priv->plat->disable_pcs_ane)
+			stmmac_pcs_ctrl_ane(priv, priv->ioaddr, 0, priv->hw->ps, 0);
+		else
+			stmmac_pcs_ctrl_ane(priv, priv->ioaddr, 1, priv->hw->ps, 0);
+	}
 
 	/* set TX and RX rings length */
 	stmmac_set_rings_length(priv);
@@ -3959,6 +3963,8 @@ static int stmmac_open(struct net_device *dev)
 	if (ret)
 		goto irq_error;
 
+	priv->irq_number = dev->irq;
+
 	stmmac_enable_all_queues(priv);
 	netif_tx_start_all_queues(priv->dev);
 	stmmac_enable_all_dma_irq(priv);
@@ -4207,9 +4213,9 @@ static netdev_tx_t stmmac_tso_xmit(struct sk_buff *skb, struct net_device *dev)
 	int tmp_pay_len = 0, first_tx;
 	struct stmmac_tx_queue *tx_q;
 	bool has_vlan, set_ic;
+	dma_addr_t tso_des, des;
 	u8 proto_hdr_len, hdr;
 	u32 pay_len, mss;
-	dma_addr_t des;
 	int i;
 
 	tx_q = &priv->tx_queue[queue];
@@ -4293,14 +4299,32 @@ static netdev_tx_t stmmac_tso_xmit(struct sk_buff *skb, struct net_device *dev)
 
 		/* If needed take extra descriptors to fill the remaining payload */
 		tmp_pay_len = pay_len - TSO_MAX_BUFF_SIZE;
+		tso_des = des;
 	} else {
 		stmmac_set_desc_addr(priv, first, des);
 		tmp_pay_len = pay_len;
-		des += proto_hdr_len;
+		tso_des = des + proto_hdr_len;
 		pay_len = 0;
 	}
 
-	stmmac_tso_allocator(priv, des, tmp_pay_len, (nfrags == 0), queue);
+	stmmac_tso_allocator(priv, tso_des, tmp_pay_len, (nfrags == 0), queue);
+
+	/* In case two or more DMA transmit descriptors are allocated for this
+	 * non-paged SKB data, the DMA buffer address should be saved to
+	 * tx_q->tx_skbuff_dma[].buf corresponding to the last descriptor,
+	 * and leave the other tx_q->tx_skbuff_dma[].buf as NULL to guarantee
+	 * that stmmac_tx_clean() does not unmap the entire DMA buffer too early
+	 * since the tail areas of the DMA buffer can be accessed by DMA engine
+	 * sooner or later.
+	 * By saving the DMA buffer address to tx_q->tx_skbuff_dma[].buf
+	 * corresponding to the last descriptor, stmmac_tx_clean() will unmap
+	 * this DMA buffer right after the DMA engine completely finishes the
+	 * full buffer transmission.
+	 */
+	tx_q->tx_skbuff_dma[tx_q->cur_tx].buf = des;
+	tx_q->tx_skbuff_dma[tx_q->cur_tx].len = skb_headlen(skb);
+	tx_q->tx_skbuff_dma[tx_q->cur_tx].map_as_page = false;
+	tx_q->tx_skbuff_dma[tx_q->cur_tx].buf_type = STMMAC_TXBUF_T_SKB;
 
 	/* In case two or more DMA transmit descriptors are allocated for this
 	 * non-paged SKB data, the DMA buffer address should be saved to
@@ -5180,10 +5204,10 @@ static int stmmac_rx_zc(struct stmmac_priv *priv, int limit, u32 queue)
 			len = 0;
 		}
 
+read_again:
 		if (count >= limit)
 			break;
 
-read_again:
 		buf1_len = 0;
 		entry = next_entry;
 		buf = &rx_q->buf_pool[entry];
@@ -7645,6 +7669,12 @@ int stmmac_suspend(struct device *dev)
 			hrtimer_cancel(&priv->tx_queue[chan].txtimer);
 	}
 
+	/* Free the IRQ lines */
+	if (priv->irq_number != 0) {
+		free_irq(ndev->irq, ndev);
+		priv->irq_number = 0;
+	}
+
 	if (priv->eee_enabled) {
 		priv->tx_path_in_lpi_mode = false;
 		del_timer_sync(&priv->eee_ctrl_timer);
@@ -7723,6 +7753,92 @@ static void stmmac_reset_queues_param(struct stmmac_priv *priv)
 	}
 }
 
+static void stmmac_reinit_rx_buffers(struct stmmac_priv *priv)
+{
+	u32 rx_count = priv->plat->rx_queues_to_use;
+	u32 queue;
+	int i;
+
+	for (queue = 0; queue < rx_count; queue++) {
+		struct stmmac_rx_queue *rx_q = &priv->rx_queue[queue];
+
+		for (i = 0; i < priv->dma_rx_size; i++) {
+			struct stmmac_rx_buffer *buf = &rx_q->buf_pool[i];
+
+			if (buf && buf->page) {
+				page_pool_recycle_direct(rx_q->page_pool, buf->page);
+				buf->page = NULL;
+			}
+
+			if (priv->sph && buf && buf->sec_page) {
+				page_pool_recycle_direct(rx_q->page_pool, buf->sec_page);
+				buf->sec_page = NULL;
+			}
+		}
+	}
+
+	for (queue = 0; queue < rx_count; queue++) {
+		struct stmmac_rx_queue *rx_q = &priv->rx_queue[queue];
+
+		for (i = 0; i < priv->dma_rx_size; i++) {
+			struct stmmac_rx_buffer *buf = &rx_q->buf_pool[i];
+			struct dma_desc *p;
+
+			if (priv->extend_desc)
+				p = &((rx_q->dma_erx + i)->basic);
+			else
+				p = rx_q->dma_rx + i;
+
+			if (!buf->page) {
+				buf->page = page_pool_dev_alloc_pages(rx_q->page_pool);
+				if (!buf->page)
+					goto err_reinit_rx_buffers;
+
+				buf->addr = page_pool_get_dma_addr(buf->page);
+				if (!buf->addr) {
+					pr_err("buf->addr is NULL\n");
+					goto err_reinit_rx_buffers;
+				}
+			}
+
+			if (priv->sph && !buf->sec_page) {
+				buf->sec_page = page_pool_dev_alloc_pages(rx_q->page_pool);
+				if (!buf->sec_page)
+					goto err_reinit_rx_buffers;
+
+				buf->sec_addr = page_pool_get_dma_addr(buf->sec_page);
+				if (!buf->sec_addr) {
+					pr_err("buf->sec_addr is NULL\n");
+					goto err_reinit_rx_buffers;
+				}
+				stmmac_set_desc_sec_addr(priv, p, buf->sec_addr, true);
+			} else {
+				buf->sec_page = NULL;
+				stmmac_set_desc_sec_addr(priv, p, buf->sec_addr, false);
+			}
+
+			stmmac_set_desc_addr(priv, p, buf->addr);
+
+			if (priv->dma_buf_sz == BUF_SIZE_16KiB)
+				stmmac_init_desc3(priv, p);
+		}
+	}
+
+	return;
+
+err_reinit_rx_buffers:
+	pr_err(" error in reinit_rx_buffers\n");
+	do {
+		while (--i >= 0)
+			stmmac_free_rx_buffer(priv, queue, i);
+
+		if (queue == 0)
+			break;
+
+		i = priv->dma_rx_size;
+	} while (queue-- > 0);
+}
+
 /**
  * stmmac_resume - resume callback
  * @dev: device pointer
@@ -7784,10 +7900,17 @@ int stmmac_resume(struct device *dev)
 
 	stmmac_reset_queues_param(priv);
 
+	stmmac_reinit_rx_buffers(priv);
 	stmmac_free_tx_skbufs(priv);
 	stmmac_clear_descriptors(priv);
 
-	stmmac_hw_setup(ndev, false);
+	ret = stmmac_hw_setup(ndev, false);
+	if (ret < 0) {
+		netdev_err(priv->dev, "%s: Hw setup failed\n", __func__);
+		mutex_unlock(&priv->lock);
+		rtnl_unlock();
+		return ret;
+	}
 
 	if (!priv->tx_coal_timer_disable) {
 		stmmac_init_coalesce(priv);
@@ -7799,6 +7922,16 @@ int stmmac_resume(struct device *dev)
 	stmmac_set_rx_mode(ndev);
 
 	stmmac_restore_hw_vlan_rx_fltr(priv, ndev, priv->hw);
+
+	if (priv->irq_number == 0) {
+		ret = request_irq(ndev->irq, stmmac_interrupt,
+				  IRQF_SHARED, ndev->name, ndev);
+		if (unlikely(ret < 0))
+			netdev_err(priv->dev,
+				   "%s: ERROR: allocating the IRQ %d (error: %d)\n",
+				   __func__, ndev->irq, ret);
+		priv->irq_number = ndev->irq;
+	}
 
 	stmmac_enable_all_queues(priv);
 	stmmac_enable_all_dma_irq(priv);
