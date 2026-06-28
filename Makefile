@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 15
-SUBLEVEL = 202
+SUBLEVEL = 207
 EXTRAVERSION =
 NAME = Trick or Treat
 
@@ -1212,8 +1212,8 @@ export MODULES_NSDEPS := $(extmod_prefix)modules.nsdeps
 
 PHONY += headers
 
-ext-mod-dir := ../sm8550-modules
-ext-mod-dirs := $(ext-mod-dir)/qcom/opensource/audio-kernel $(ext-mod-dir)/qcom/opensource/display-drivers $(ext-mod-dir)/qcom/opensource/video-kernel $(ext-mod-dir)/nxp/opensource/driver
+ext-mod-dir := ../sm7550-modules
+ext-mod-dirs := $(ext-mod-dir)/qcom/opensource/audio-kernel $(ext-mod-dir)/qcom/opensource/display-drivers $(ext-mod-dir)/qcom/opensource/video-kernel
 ext-mod-dirs := $(subst $(srctree)/,,$(ext-mod-dirs))
 
 #Default location for installed headers
